@@ -1,0 +1,180 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JARVIS Head Control</title>
+<style>
+  body {
+    background: #10151f;
+    color: #e8f3ff;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 24px 16px;
+  }
+  h2 { color: #56cfff; }
+  button {
+    border: 1px solid #56cfff;
+    background: #19283b;
+    color: white;
+    border-radius: 12px;
+    padding: 13px 20px;
+    font-size: 16px;
+    margin: 6px;
+  }
+  #pad {
+    width: min(78vw, 320px);
+    height: min(78vw, 320px);
+    max-height: 320px;
+    max-width: 320px;
+    border: 2px solid #56cfff;
+    border-radius: 50%;
+    margin: 25px auto;
+    position: relative;
+    background: radial-gradient(#20374b, #111824);
+    touch-action: none;
+    user-select: none;
+  }
+  #stick {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    background: #56cfff;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 24px #168fcf;
+    pointer-events: none;
+  }
+  #angle { font-size: 36px; color: #56cfff; }
+  #status { color: #ffc857; }
+</style>
+</head>
+<body>
+<h2>JARVIS HEAD CONTROL</h2>
+<p id="status">Belum terhubung</p>
+<button id="connect">Hubungkan Bluetooth</button>
+
+<div id="angle">90°</div>
+<p>Geser joystick ke kiri atau kanan</p>
+
+<div id="pad">
+  <div id="stick"></div>
+</div>
+
+<button id="center">Kembali ke tengah</button>
+
+<script>
+const SERVICE_UUID =
+  "7b2a0001-8f4d-4a6b-9c2e-1234567890ab";
+const ANGLE_UUID =
+  "7b2a0002-8f4d-4a6b-9c2e-1234567890ab";
+
+let characteristic = null;
+let lastSent = -1;
+let lastSendTime = 0;
+
+const statusEl = document.getElementById("status");
+const angleEl = document.getElementById("angle");
+const pad = document.getElementById("pad");
+const stick = document.getElementById("stick");
+
+document.getElementById("connect").onclick = async () => {
+  try {
+    if (!navigator.bluetooth) {
+      throw new Error("Gunakan Chrome Android melalui HTTPS.");
+    }
+
+    statusEl.textContent = "Mencari ESP32-S3...";
+
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: "JARVIS-SG90" }],
+      optionalServices: [SERVICE_UUID]
+    });
+
+    device.addEventListener("gattserverdisconnected", () => {
+      characteristic = null;
+      statusEl.textContent = "Bluetooth terputus";
+    });
+
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    characteristic =
+      await service.getCharacteristic(ANGLE_UUID);
+
+    statusEl.textContent = "Terhubung ke JARVIS-SG90";
+    await sendAngle(90);
+  } catch (e) {
+    statusEl.textContent = "Gagal: " + e.message;
+  }
+};
+
+async function sendAngle(angle) {
+  if (!characteristic) return;
+
+  const now = Date.now();
+  if (angle === lastSent || now - lastSendTime < 60) return;
+
+  lastSent = angle;
+  lastSendTime = now;
+  angleEl.textContent = angle + "°";
+
+  try {
+    await characteristic.writeValue(
+      new TextEncoder().encode(String(angle))
+    );
+  } catch (e) {
+    statusEl.textContent = "Pengiriman gagal: " + e.message;
+  }
+}
+
+function moveStick(event) {
+  const rect = pad.getBoundingClientRect();
+  const centerX = rect.width / 2;
+  const centerY = rect.height / 2;
+
+  let dx = event.clientX - rect.left - centerX;
+  let dy = event.clientY - rect.top - centerY;
+
+  const radius = rect.width * 0.34;
+  dx = Math.max(-radius, Math.min(radius, dx));
+  dy = Math.max(-radius, Math.min(radius, dy));
+
+  stick.style.left = (centerX + dx) + "px";
+  stick.style.top = (centerY + dy) + "px";
+
+  const angle = Math.round(
+    90 + (dx / radius) * 90
+  );
+
+  sendAngle(Math.max(0, Math.min(180, angle)));
+}
+
+function resetStick() {
+  stick.style.left = "50%";
+  stick.style.top = "50%";
+}
+
+pad.addEventListener("pointerdown", event => {
+  pad.setPointerCapture(event.pointerId);
+  moveStick(event);
+});
+
+pad.addEventListener("pointermove", event => {
+  if (event.buttons || event.pressure > 0) {
+    moveStick(event);
+  }
+});
+
+pad.addEventListener("pointerup", resetStick);
+pad.addEventListener("pointercancel", resetStick);
+
+document.getElementById("center").onclick = async () => {
+  resetStick();
+  await sendAngle(90);
+};
+</script>
+</body>
+</html>
